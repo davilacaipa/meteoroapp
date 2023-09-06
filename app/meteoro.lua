@@ -24,18 +24,6 @@ local function getNextBlankId()
     return string.rep(" ", curBlankId)
 end
 
-local alien2 = ffi.load(cwd() .. "alien2.dll")
-
-ffi.cdef[[
-    void lj_disablePitLimiter(bool active);
-    void lj_overrideLapTime(int time);
-    void lj_setGripMultiplier(float multiplier);
-    void lj_setNoclip(bool active);
-    double lj_getGearRatio(int gear);
-    void lj_setGearRatio(int gear, double ratio);
-    void lj_resetGearRatios();
-]]
-
 local settings = {
 
     
@@ -55,24 +43,8 @@ local settings = {
         injectNosBoosting = false
     },
 
-    drivetrain = {
-        gearRatios = {}
-    },
-
-    autopilot = {
-        enabled = false,
-        skill = 75,
-        aggressiveness = 50
-    },
-
-    lap = {
-        fuelFreeze = -1,
-        shouldOverride = false,
-        lapTimeString = ""
-    },
-
     misc = {
-        disablePitLimiter = false,
+        fuelFreeze = -1,
         disableDamage = false,
         noclip = false
     }
@@ -86,16 +58,22 @@ local seconds = 0;
 local rpmBeforeClutch;
 local angularVelocity;
 local slipAngle;
-local slipAngleHandbrake;
+local slipAngleHandbrake = 0;
 local angularVelocityHandBrake = 0;
-local activeClutch;
 local rpm = 0;
 local limitRpm = 4500;
-local ratiozera = alien2.lj_getGearRatio(1);
 local sound_nos_start = ac.AudioEvent.fromFile({ filename = cwd() .. "nos_engage.wav", use3D = true, loop = false }, true)
 local sound_nos_loop = ac.AudioEvent.fromFile({ filename = cwd() .. "nos_loop.wav", use3D = true, loop = true }, true)
 
+function getGripMultiplayer(value)
+    return ac.store("meteoro.grip")
+end
 
+function setGripMultiplayer(value)
+    ac.store("meteoro.grip", value)
+end
+
+setGripMultiplayer(settings.handling.gripMultiplier)
 
 function script.windowMain(dt)
 
@@ -115,50 +93,59 @@ function script.windowMain(dt)
                 settings.power.brake = currentBrake
             end
           
-            ui.text("NoS power (Flash headlights)")
-            local currentNoS, hasChangedNoS = ui.slider(getNextBlankId(), settings.power.nos, 0, 50, "%.1f m/s²")
-            if hasChangedNoS then
-                settings.power.nos = currentNoS
-            end
-
         end)
 
         ui.tabItem("Handling", function()
+
+            local localCar = ac.getCar(0)     
 
             if ui.checkbox("Optimal tire temperatures", settings.handling.optimalTireTemp) then
                 settings.handling.optimalTireTemp = not settings.handling.optimalTireTemp
             end
             local cl = 0
-            if ac.getJoystickAxisValue(1, 6) ~= 1 then
-                cl = (ac.getJoystickAxisValue(1, 6) - 1) * -1
+            if ac.getJoystickAxisValue(0, 6) ~= 1 then
+                cl = (ac.getJoystickAxisValue(0, 6) - 1) * -1
             end
+
+            local handBrake = ac.getJoystickAxisValue(1, 6) + 2
+
             --ui.text("clutch " .. ac.getJoystickAxisValue(1, 6))
-            ui.text("clutch " .. cl)         
+            ui.text("clutch " .. cl)  
+            ui.text("handbrake " .. handBrake)  
+            
             --ui.text("ab " .. (ab and "true" or "false"))         
             
-            --ui.text("joystick 1" .. ac.getJoystickName(1))
-            --ui.text("joystick val " .. ac.getJoystickAxisValue(1, 6))         
+            ui.text("joystick 1" .. ac.getJoystickName(1))
+            --ui.text("joystick val " .. ac.getJoystickAxisValue(0, 6))         
            -- ui.text("local Velocity " .. localCar.localVelocity.z .. " " .. localCar.localVelocity.x .. " " .. localCar.localVelocity.y)   
             --ui.text("Angular Velocity " .. localCar.localAngularVelocity.z .. " " .. localCar.localAngularVelocity.x .. " " .. localCar.localAngularVelocity.y)  
            -- ui.text("Angular Velocity " .. angularVelocity)  
-          --  ui.text("Angular Velocity " .. localCar.gas)  
+          ui.text("wheel 1: " .. localCar.wheels[0].surfaceGrip)  
+          ui.text("wheel 2: " .. localCar.wheels[1].surfaceGrip)  
+          ui.text("wheel 3: " .. localCar.wheels[2].surfaceGrip)  
+          ui.text("wheel 4: " .. localCar.wheels[3].surfaceGrip)  
+
+        --   ui.text("fuel : " .. localCar.fuel)  
+        --   ui.text("temperatureMultiplier : " .. localCar.wheels[0].temperatureMultiplier)  
+        --   ui.text("tyreCoreTemperature : " .. ac.getCar(0).wheels[0].tyreCoreTemperature)  
           ui.text("Angular Velocity " .. localCar.wheels[0].angularSpeed )  
           ui.text("SlipAngle " .. localCar.wheels[0].slipAngle )
             ui.text("Grip multiplier")
-            local currentGrip, hasChangedGrip = ui.slider(getNextBlankId(), settings.handling.gripMultiplier, 0, 15, "%.2fx")
+            local currentGrip, hasChangedGrip = ui.slider(getNextBlankId(), settings.handling.gripMultiplier, 0, 2, "%.2fx")
             if hasChangedGrip then
                 settings.handling.gripMultiplier = currentGrip
-                alien2.lj_setGripMultiplier(currentGrip)
+                setGripMultiplayer(currentGrip)
             end
 
             ui.text("power time " .. ac.getSim().time .. " " .. seconds)
             
             if ui.checkbox("Grip X1", settings.handling.gripMultiplierOne) then
+                local localCar = ac.getCar(0)     
                 settings.handling.gripMultiplier = 1;
-                alien2.lj_setGripMultiplier(1)
+                setGripMultiplayer(1)
             end
 
-            if ui.checkbox("POWER CLUTCH", powerClutch) then
+            if ui.checkbox("Power clutch", powerClutch) then
                 powerClutch = not powerClutch
             end
 
@@ -172,92 +159,10 @@ function script.windowMain(dt)
 
         end)
 
-        ui.tabItem("Drivetrain", function()
-
-            for gear = 0, localCar.gearCount do
-                local gearName = gear == 0 and "R" or gear
-                settings.drivetrain.gearRatios[gear] = alien2.lj_getGearRatio(gear)
-
-                ui.text("Gear " .. gearName)
-                local currentGearRatio, hasChangedGearRatio = ui.slider(getNextBlankId(), settings.drivetrain.gearRatios[gear], -5, 8, "%.4f", 2)
-                if hasChangedGearRatio then
-
-                    alien2.lj_setGearRatio(gear, currentGearRatio)
-                end
-
-            end
-
-            if ui.button("Reset") then
-                alien2.lj_resetGearRatios()
-            end
-
-        end)
-
-        ui.tabItem("Auto-pilot", function()
-
-            if ui.checkbox("Enabled", settings.autopilot.enabled) then
-                settings.autopilot.enabled = not settings.autopilot.enabled
-                physics.setCarAutopilot(settings.autopilot.enabled)
-                
-            end
-
-            ui.text("Skill")
-            local currentSkill, hasChangedSkill = ui.slider(getNextBlankId(), settings.autopilot.skill, 0, 100, "%.0f%%")
-            if hasChangedSkill then
-                settings.autopilot.skill = currentSkill
-                physics.setAILevel(0, currentSkill / 100)
-            end
-
-            ui.text("Aggressiveness")
-            local currentAggressiveness, hasChangedAggressiveness = ui.slider(getNextBlankId(), settings.autopilot.aggressiveness, 0, 100, "%.0f%%")
-            if hasChangedAggressiveness then
-                settings.autopilot.aggressiveness = currentAggressiveness
-                physics.setAIAggression(0, currentAggressiveness / 100)
-            end
-
-        end)
-
-        ui.tabItem("Lap", function()
-            
-            if ui.checkbox("Freeze fuel amount", settings.lap.fuelFreeze >= 0) then
-                settings.lap.fuelFreeze = settings.lap.fuelFreeze > 0 and -1 or localCar.fuel
-                
-            end
-            
-            local hasEnabledOverride = false
-            if ui.checkbox("Override lap time", settings.lap.shouldOverride) then
-                settings.lap.shouldOverride = not settings.lap.shouldOverride
-
-                if settings.lap.shouldOverride then
-                    settings.lap.lapTimeString = ac.lapTimeToString(localCar.lapTimeMs)
-                    hasEnabledOverride = true
-                else
-                    alien2.lj_overrideLapTime(0)
-                end
-
-            end
-
-            if settings.lap.shouldOverride then
-                local currentTime, hasChangedTime = ui.inputText(" ", settings.lap.lapTimeString)
-                if hasChangedTime or hasEnabledOverride then
-                    settings.lap.lapTimeString = currentTime
-                    local overrideLapMs = lapStringToMs(currentTime)
-
-                    if overrideLapMs ~= nil then
-                        alien2.lj_overrideLapTime(overrideLapMs)
-                    end
-                end
-
-            end
-
-            ui.text("* Laps will never be invalid with Alien V2 running")
-        end)
-
         ui.tabItem("Misc", function()
           
-            if ui.checkbox("Disable pit speed limiter", settings.misc.disablePitLimiter) then
-                settings.misc.disablePitLimiter = not settings.misc.disablePitLimiter
-                alien2.lj_disablePitLimiter(settings.misc.disablePitLimiter)
+            if ui.checkbox("Freeze fuel amount", settings.lap.fuelFreeze >= 0) then
+                settings.lap.fuelFreeze = settings.lap.fuelFreeze > 0 and -1 or localCar.fuel
             end
 
             if ui.checkbox("Disable body and engine damage", settings.misc.disableDamage) then
@@ -266,7 +171,7 @@ function script.windowMain(dt)
 
             if ui.checkbox("No collisions", settings.misc.noclip) then
                 settings.misc.noclip = not settings.misc.noclip
-                alien2.lj_setNoclip(settings.misc.noclip)
+                -- alien2.lj_setNoclip(settings.misc.noclip)
             end
             
         end)
@@ -277,29 +182,21 @@ end
 
 function script.update(dt)    
     localCar = ac.getCar(0)        
-    
 
-    if ac.getJoystickAxisValue(1, 6) == 0 then
-        activeClutch = true        
-    else
-        rpmBeforeClutch = localCar.rpm
-        activeClutch = false
-    end
-
+    --clutch axis
     local cl = 0
-    if ac.getJoystickAxisValue(1, 6) ~= 1 then
-        cl = (ac.getJoystickAxisValue(1, 6) - 1) * -1
+    if ac.getJoystickAxisValue(0, 6) ~= 1 then
+        cl = (ac.getJoystickAxisValue(0, 6) - 1) * -1
     end
 
-    local handBrake = ac.getJoystickAxisValue(0, 6) + 2
-    
-
-    sound_nos_start:setPosition(localCar.position, nil, nil, localCar.velocity)
-    sound_nos_loop:setPosition(localCar.position, nil, nil, localCar.velocity)
+    --handbrake axis
+    local handBrake = ac.getJoystickAxisValue(1, 6) + 2
 
     if settings.handling.optimalTireTemp then
         local temp = ac.getCar(0).wheels[0].tyreOptimumTemperature
         physics.setTyresTemperature(0, ac.Wheel.All, temp)
+    else
+        physics.setTyresTemperature(0, ac.Wheel.All, 0)
     end
 
     if settings.misc.disableDamage then
@@ -311,27 +208,20 @@ function script.update(dt)
         physics.addForce(0, vec3(0, 0, 0), true, vec3(0, -settings.handling.downforceAdd * 9.8 * dt * 100, 0), true)
     end
 
-
-    if localCar.wheels[0].slipAngle > 9 or localCar.wheels[0].slipAngle < -9 then
-        alien2.lj_setGripMultiplier(1.47)
-        if localCar.gas > 0 then            
-            local passivePush = 3 * (localCar.gear - 1) * localCar.mass * 1 * dt * 100
-            physics.addForce(0, vec3(0, 0, 0), true, vec3(0, 0, passivePush), true) 
-        end
-    end
-
     if localCar.wheels[0].slipAngle > 20 or localCar.wheels[0].slipAngle < -20 then
-        alien2.lj_setGripMultiplier(1.60)
+        setGripMultiplayer(1.60)
         if localCar.gas > 0 then            
             local passivePush = 4 * (localCar.gear - 1) * localCar.mass * 1 * dt * 100
-            physics.addForce(0, vec3(0, 0, 0), true, vec3(0, 0, passivePush), true) 
+            physics.addForce(0, vec3(0, 0, 0), true, vec3(0, 0, passivePush), true)
+            physics.addForce(0, vec3(0, 0, 0), true, vec3(0, -800 * 9.8 * dt * 100, 0), true) 
             ab = true
         end
     else
         ab = false
-        alien2.lj_setGripMultiplier(settings.handling.gripMultiplier)
+        setGripMultiplayer(settings.handling.gripMultiplier)
     end
 
+    --clutch corrector logic
     if cl > 0 and localCar.gas < 0.6 and localCar.wheels[0].angularSpeed > 0 and (math.floor(localCar.wheels[0].slipAngle) > 1 or math.floor(localCar.wheels[0].slipAngle) < -1) then
         
         if localCar.wheels[0].slipAngle ^ 0 ~= slipAngle ^ 0 and localCar.wheels[0].slipAngle > 2 * x  then
@@ -368,6 +258,7 @@ function script.update(dt)
         angularVelocity = localCar.wheels[0].angularSpeed
     end
 
+    --handbrake easy oversteer
     if handBrake > 1 then     
         local x = slipAngleHandbrake >= 0 and 1 or -1
     
@@ -400,21 +291,11 @@ function script.update(dt)
         physics.addForce(0, vec3(0, 0, 0), true, vec3(0, 0, passivePush), true)
     end
 
-    if settings.power.brake > 0 and (localCar.speedKmh > 5) then
-        local passivePush = settings.power.brake +  (1.4  ^ localCar.gear) * localCar.mass * localCar.handbrake * dt * 100
-        passivePush = localCar.localVelocity.z > 0.0 and -passivePush or passivePush
-        physics.addForce(0, vec3(0, 0, 0), true, vec3(0, 0, passivePush), true)
-    end    
-    
-    if settings.lap.fuelFreeze >= 0 then
-        physics.setCarFuel(0, settings.lap.fuelFreeze)
+    if settings.misc.fuelFreeze >= 0 then
+        physics.setCarFuel(0, locarCar.fuel + 1)
     end
 
     if localCar.gear > 1 and localCar.rpm < limitRpm and localCar.gas > 0.9 then
-        physics.setEngineRPM(0, limitRpm)
-    end
-
-    if localCar.gear == 1 and localCar.gas > 0.9 and localCar.rpm < limitRpm then
         physics.setEngineRPM(0, limitRpm)
     end
 
@@ -470,36 +351,6 @@ function script.update(dt)
         end
         local passivePush = (settings.power.passiveExtra + rpmlim) * (localCar.gear - 1) * localCar.mass * localCar.gas * dt * 100        
         physics.addForce(0, vec3(0, 0, 0), true, vec3(0, 0, passivePush), true)
-    end
-
-
-    if localCar.flashingLightsActive and settings.power.nos > 0 and (localCar.gear > 0) then
-        if settings.power.injectNosStart < 0 then
-            settings.power.injectNosStart = ac.getSim().time
-            sound_nos_start:start()
-        end
-
-        if ac.getSim().time > settings.power.injectNosStart + 700 then
-            if not settings.power.injectNosBoosting then
-                sound_nos_start:stop()
-                sound_nos_loop:start()
-                settings.power.injectNosBoosting = true
-            end
-
-            local nosPush = settings.power.nos * localCar.mass * localCar.gas * dt * 100
-            physics.addForce(0, vec3(0, 0, 0), true, vec3(0, 0, nosPush), true)
-            
-            if ac.getSim().firstPersonCameraFOV < 75 then
-                ac.setFirstPersonCameraFOV(ac.getSim().firstPersonCameraFOV + 6 * dt)
-            end
-        end
-        
-    elseif powerClutch == false and settings.power.injectNosStart > 0 then
-        settings.power.injectNosStart = -1
-        settings.power.injectNosBoosting = false
-        sound_nos_start:stop()
-        sound_nos_loop:stop()
-        ac.resetFirstPersonCameraFOV()
     end
 
 end
